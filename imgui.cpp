@@ -9605,6 +9605,38 @@ static void ImGui::UpdateMouseInputs()
 
     for (int i = 0; i < IM_ARRAYSIZE(io.MouseDown); i++)
     {
+        // Replay this frame's processed mouse events to track the maximum distance
+        // from the click position while the button was down. Sampling only the final
+        // frame state misses movement before a release and movement that returns to
+        // the click position within the same frame.
+        bool drag_event_down = io.MouseDownDuration[i] >= 0.0f;
+        ImVec2 drag_event_origin = io.MouseClickedPos[i];
+        ImVec2 drag_event_pos = io.MousePosPrev;
+        float drag_event_max_sqr = io.MouseDragMaxDistanceSqr[i];
+        bool drag_event_moved = false;
+        for (const ImGuiInputEvent& event : g.InputEventsTrail)
+        {
+            if (event.Type == ImGuiInputEventType_MousePos && !io.WantSetMousePos)
+            {
+                drag_event_pos = ImVec2(event.MousePos.PosX, event.MousePos.PosY);
+                if (drag_event_down && IsMousePosValid(&drag_event_pos) && IsMousePosValid(&drag_event_origin))
+                {
+                    drag_event_max_sqr = ImMax(drag_event_max_sqr, ImLengthSqr(drag_event_pos - drag_event_origin));
+                    drag_event_moved = true;
+                }
+            }
+            else if (event.Type == ImGuiInputEventType_MouseButton && event.MouseButton.Button == i)
+            {
+                if (event.MouseButton.Down && !drag_event_down)
+                {
+                    drag_event_origin = drag_event_pos;
+                    drag_event_max_sqr = 0.0f;
+                    drag_event_moved = false;
+                }
+                drag_event_down = event.MouseButton.Down;
+            }
+        }
+
         io.MouseClicked[i] = io.MouseDown[i] && io.MouseDownDuration[i] < 0.0f;
         io.MouseClickedCount[i] = 0; // Will be filled below
         io.MouseReleased[i] = !io.MouseDown[i] && io.MouseDownDuration[i] >= 0.0f;
@@ -9636,6 +9668,8 @@ static void ImGui::UpdateMouseInputs()
             float delta_sqr_click_pos = IsMousePosValid(&io.MousePos) ? ImLengthSqr(io.MousePos - io.MouseClickedPos[i]) : 0.0f;
             io.MouseDragMaxDistanceSqr[i] = ImMax(io.MouseDragMaxDistanceSqr[i], delta_sqr_click_pos);
         }
+        if (drag_event_moved)
+            io.MouseDragMaxDistanceSqr[i] = ImMax(io.MouseDragMaxDistanceSqr[i], drag_event_max_sqr);
 
         // We provide io.MouseDoubleClicked[] as a legacy service
         io.MouseDoubleClicked[i] = (io.MouseClickedCount[i] == 2);
